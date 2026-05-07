@@ -3,7 +3,7 @@
 Comunicación descentralizada P2P con inteligencia artificial local. Walkie-Talkie mesh sobre WebRTC + Bluetooth LE + Nostr.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![GitHub Pages](https://img.shields.io/badge/deploy-GitHub%20Pages-222?logo=github)](https://nautiluz.github.io/bitchat-ai-mesh)
+[![GitHub Pages](https://img.shields.io/badge/deploy-GitHub%20Pages-222?logo=github)](https://nautiluz.github.io/Walkie-Mesh)
 
 ## Arquitectura
 
