@@ -1,3 +1,5 @@
+import { noiseSuppressor } from '../ai/noiseSuppressor'
+
 export class AudioService {
   private stream: MediaStream | null = null
   private audioContext: AudioContext | null = null
@@ -6,6 +8,7 @@ export class AudioService {
   private isPTTActive = false
   private vadThreshold = 0.02
   private audioElements: Map<string, HTMLAudioElement> = new Map()
+  private noiseSuppressionEnabled = false
 
   async init() {
     this.audioContext = new AudioContext()
@@ -20,7 +23,22 @@ export class AudioService {
     this.source = this.audioContext.createMediaStreamSource(this.stream)
   }
 
-  startPTT(onAudioData: (data: Float32Array) => void, onVAD?: (speaking: boolean) => void) {
+  setNoiseSuppression(enabled: boolean) {
+    this.noiseSuppressionEnabled = enabled
+    if (enabled) {
+      noiseSuppressor.init()
+    }
+  }
+
+  async learnNoiseProfile(data: Float32Array) {
+    if (!this.noiseSuppressionEnabled) return
+    await noiseSuppressor.learnNoise(data)
+  }
+
+  startPTT(
+    onAudioData: (data: Float32Array) => void,
+    onVAD?: (speaking: boolean) => void
+  ) {
     if (!this.audioContext || !this.source) return
     this.isPTTActive = true
     const bufferSize = 4096
@@ -28,13 +46,24 @@ export class AudioService {
     this.source.connect(this.processor)
     this.processor.connect(this.audioContext.destination)
 
-    this.processor.onaudioprocess = (e) => {
+    this.processor.onaudioprocess = async (e) => {
       if (!this.isPTTActive) return
       const input = e.inputBuffer.getChannelData(0)
-      const energy = input.reduce((sum, s) => sum + Math.abs(s), 0) / input.length
+
+      let processed: Float32Array = input
+      if (this.noiseSuppressionEnabled && !noiseSuppressor.hasNoiseProfile()) {
+        await this.learnNoiseProfile(input)
+      }
+      if (this.noiseSuppressionEnabled && noiseSuppressor.hasNoiseProfile()) {
+        processed = await noiseSuppressor.process(input) as Float32Array
+      }
+
+      const energy = processed.reduce((sum, s) => sum + Math.abs(s), 0) / processed.length
       if (onVAD) onVAD(energy > this.vadThreshold)
       if (energy > this.vadThreshold) {
-        onAudioData(new Float32Array(input))
+        onAudioData(new Float32Array(processed))
+      } else if (!this.noiseSuppressionEnabled) {
+        onAudioData(new Float32Array(processed))
       }
     }
   }
@@ -99,6 +128,7 @@ export class AudioService {
       this.audioContext.close()
       this.audioContext = null
     }
+    noiseSuppressor.dispose()
   }
 }
 

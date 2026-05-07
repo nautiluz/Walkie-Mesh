@@ -1,9 +1,10 @@
 import * as tf from '@tensorflow/tfjs'
+import { signalOptimizer } from '../ai/signalOptimizer'
+import { noiseSuppressor } from '../ai/noiseSuppressor'
 
 class TensorFlowService {
   private initialized = false
-  private backend: 'webgl' | 'webgpu' | 'cpu' = 'cpu'
-  private models: Map<string, tf.LayersModel> = new Map()
+  private backend: 'webgpu' | 'webgl' | 'cpu' = 'cpu'
 
   async init() {
     if (this.initialized) return
@@ -22,78 +23,30 @@ class TensorFlowService {
       }
     }
 
+    await signalOptimizer.init()
+    await noiseSuppressor.init()
+
+    signalOptimizer.train(50)
+
     this.initialized = true
-    console.log(`TF.js initialized with backend: ${this.backend}`)
+    console.log(`TF.js initialized: ${this.backend} backend`)
   }
 
   getBackend() { return this.backend }
 
   isInitialized() { return this.initialized }
 
-  async loadModel(name: string, url: string) {
-    try {
-      const model = await tf.loadLayersModel(url)
-      this.models.set(name, model)
-      return model
-    } catch (err) {
-      console.error(`Failed to load model ${name}:`, err)
-      return null
-    }
+  async optimizeBitrate(metrics: { rssi: number; packetLoss: number; latency: number }) {
+    return signalOptimizer.predict(metrics.rssi, metrics.packetLoss, metrics.latency)
   }
 
-  getModel(name: string) {
-    return this.models.get(name) || null
-  }
+  getNoiseSuppressor() { return noiseSuppressor }
 
-  async optimizeBitrate(metrics: {
-    rssi: number
-    packetLoss: number
-    latency: number
-  }): Promise<number> {
-    if (!this.initialized) return this.heuristicBitrate(metrics)
-
-    const input = tf.tensor2d([
-      [metrics.rssi, metrics.packetLoss, metrics.latency]
-    ])
-
-    const model = this.models.get('signal-optimizer')
-    if (model) {
-      const prediction = model.predict(input) as tf.Tensor
-      const bitrate = (await prediction.data())[0]
-      input.dispose()
-      prediction.dispose()
-      return Math.max(8000, Math.min(64000, Math.round(bitrate)))
-    }
-
-    input.dispose()
-    return this.heuristicBitrate(metrics)
-  }
-
-  private heuristicBitrate(metrics: {
-    rssi: number
-    packetLoss: number
-    latency: number
-  }): number {
-    const { rssi, packetLoss, latency } = metrics
-    if (rssi > -50 && packetLoss < 0.02 && latency < 100) return 64000
-    if (rssi > -70 && packetLoss < 0.05 && latency < 200) return 32000
-    if (rssi > -85 && packetLoss < 0.1 && latency < 400) return 16000
-    return 8000
-  }
-
-  createSignalOptimizerModel(): tf.LayersModel {
-    const model = tf.sequential()
-    model.add(tf.layers.dense({ units: 8, activation: 'relu', inputShape: [3] }))
-    model.add(tf.layers.dense({ units: 8, activation: 'relu' }))
-    model.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }))
-    model.compile({ optimizer: 'adam', loss: 'meanSquaredError' })
-    this.models.set('signal-optimizer', model)
-    return model
-  }
+  getSignalOptimizer() { return signalOptimizer }
 
   dispose() {
-    this.models.forEach(m => m.dispose())
-    this.models.clear()
+    signalOptimizer.dispose()
+    noiseSuppressor.dispose()
   }
 }
 
