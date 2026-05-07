@@ -130,5 +130,5 @@ CREATE POLICY "Messages insertable by sender"
 
 -- Seed initial license for development
 INSERT INTO licenses (license_key, domain, is_active)
-VALUES ('DEV-LICENSE-2025', 'localhost', true)
+VALUES ('DEV-LICENSE-2025', 'localhost', true), ('GITHUB-PAGES-2025', 'nautiluz.github.io', true)
 ON CONFLICT (license_key) DO NOTHING;

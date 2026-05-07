@@ -13,6 +13,7 @@ import { NoiseSuppressor, VADDetector, SignalOptimizer } from './components/ai/i
 import { TelemetryDashboard } from './components/telemetry/Dashboard'
 import { TelemetryOptIn } from './components/telemetry/OptInDialog'
 import { LicenseValidator } from './components/auth/LicenseValidator'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { useState, useEffect } from 'react'
 import { useAuth } from './hooks/useAuth'
 import { useSettingsStore } from './store/settingsStore'
@@ -119,7 +120,7 @@ function AppContent() {
   const { telemetryEnabled } = useSettingsStore()
 
   useEffect(() => {
-    tfService.init()
+    tfService.init().catch(console.error)
   }, [])
 
   useEffect(() => {
@@ -161,9 +162,11 @@ function AppContent() {
 export default function App() {
   return (
     <Router>
-      <LicenseValidator />
-      <TelemetryOptIn />
-      <AppContent />
+      <ErrorBoundary>
+        <LicenseValidator />
+        <TelemetryOptIn />
+        <AppContent />
+      </ErrorBoundary>
     </Router>
   )
 }

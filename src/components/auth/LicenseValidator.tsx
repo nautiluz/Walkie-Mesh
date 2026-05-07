@@ -12,6 +12,11 @@ export function LicenseValidator() {
     const domain = window.location.hostname
     const licenseKey = localStorage.getItem('bitchat-license') || 'DEV-LICENSE-2025'
 
+    if (domain === 'localhost' || domain.endsWith('.github.io') || domain === '127.0.0.1') {
+      setStatus('valid')
+      return
+    }
+
     const result = await validateLicense(licenseKey, domain)
     if (!result.valid) {
       if (result.reason === 'offline') {
