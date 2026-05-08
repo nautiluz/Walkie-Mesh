@@ -74,14 +74,20 @@ function ContactsPage() {
 }
 
 function CameraPage() {
+  const [tab, setTab] = useState<'qr' | 'scan' | 'ar'>('qr')
+
   return (
     <div className="space-y-4 pt-4">
-      <h2 className="text-lg font-bold">Tu QR</h2>
-      <QRGenerator />
-      <h2 className="text-lg font-bold mt-6">Escanear QR</h2>
-      <QRScanner />
-      <h2 className="text-lg font-bold mt-6">Visión AR</h2>
-      <AROverlay />
+      <div className="flex gap-1 bg-slate-800/50 rounded-xl p-1">
+        {([['qr', 'Mi QR'], ['scan', 'Escanear'], ['ar', 'AR']] as const).map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            className={`flex-1 py-2 text-xs rounded-lg font-medium transition-colors ${tab === key ? 'bg-mesh-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+          >{label}</button>
+        ))}
+      </div>
+      {tab === 'qr' && <QRGenerator />}
+      {tab === 'scan' && <QRScanner />}
+      {tab === 'ar' && <AROverlay />}
     </div>
   )
 }
