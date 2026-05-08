@@ -44,7 +44,14 @@ export function WalkieTalkie() {
 
   const initWalkieTalkie = async () => {
     try {
-      await audioService.init()
+      try {
+        await audioService.init()
+      } catch (err) {
+        console.error('Audio init error:', err)
+        setError('Error al acceder al micrófono. Verifica permisos.')
+        return
+      }
+
       const stream = audioService.getStream()
       if (stream) {
         webRTCService.setLocalStream(stream)
@@ -52,78 +59,90 @@ export function WalkieTalkie() {
 
       if (profile?.privateKeyEncrypted) {
         let privkey = profile.privateKeyEncrypted
-        if (privkey.startsWith('nsec')) {
-          const { nip19 } = await import('nostr-tools')
-          const decoded = nip19.decode(privkey)
-          if (decoded.type === 'nsec') {
-            privkey = Array.from(decoded.data as Uint8Array)
-              .map(b => b.toString(16).padStart(2, '0'))
-              .join('')
+        try {
+          if (privkey.startsWith('nsec')) {
+            const { nip19 } = await import('nostr-tools')
+            const decoded = nip19.decode(privkey)
+            if (decoded.type === 'nsec') {
+              privkey = Array.from(decoded.data as Uint8Array)
+                .map(b => b.toString(16).padStart(2, '0'))
+                .join('')
+            }
           }
+        } catch (err) {
+          console.error('Key decode error:', err)
+          setError('Error al decodificar llave Nostr.')
+          return
         }
 
-        const { SimplePool, finalizeEvent } = await import('nostr-tools')
-        const pool = new SimplePool()
-        poolRef.current = pool
-        const pubkey = profile.publicKey
-        const sk = new Uint8Array(privkey.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
+        try {
+          const { SimplePool, finalizeEvent } = await import('nostr-tools')
+          const pool = new SimplePool()
+          poolRef.current = pool
+          const pubkey = profile.publicKey
+          const sk = new Uint8Array(privkey.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
 
-        webRTCService.setConfig({
-          onSignal: (targetPubkey, signal) => {
-            const event = {
-              kind: SIGNAL_KIND,
-              pubkey,
-              created_at: Math.floor(Date.now() / 1000),
-              tags: [['p', targetPubkey]],
-              content: JSON.stringify(signal)
-            }
-            const signed = finalizeEvent(event, sk)
-            const promises = pool.publish(SIGNAL_RELAYS, signed)
-            Promise.allSettled(promises).catch(() => {})
-          },
-          onData: (fromPubkey, data) => {
-            try {
-              const parsed = JSON.parse(data)
-              if (parsed.type === 'chat' && parsed.text) {
-                addChatMessage(fromPubkey, {
-                  id: crypto.randomUUID(),
-                  pubkey: fromPubkey,
-                  text: parsed.text,
-                  timestamp: Date.now()
-                })
+          webRTCService.setConfig({
+            onSignal: (targetPubkey, signal) => {
+              const event = {
+                kind: SIGNAL_KIND,
+                pubkey,
+                created_at: Math.floor(Date.now() / 1000),
+                tags: [['p', targetPubkey]],
+                content: JSON.stringify(signal)
               }
-            } catch {}
-          },
-          onStream: (fromPubkey, stream) => {
-            audioService.addPeerAudio(fromPubkey, stream)
-          },
-          onConnect: (pubkey) => {
-            const msgs = pendingMessagesRef.current
-            pendingMessagesRef.current = []
-            msgs.forEach(text => {
-              webRTCService.sendData(pubkey, JSON.stringify({ type: 'chat', text }))
-            })
-          },
-          onDisconnect: () => {}
-        })
+              const signed = finalizeEvent(event, sk)
+              const promises = pool.publish(SIGNAL_RELAYS, signed)
+              Promise.allSettled(promises).catch(() => {})
+            },
+            onData: (fromPubkey, data) => {
+              try {
+                const parsed = JSON.parse(data)
+                if (parsed.type === 'chat' && parsed.text) {
+                  addChatMessage(fromPubkey, {
+                    id: crypto.randomUUID(),
+                    pubkey: fromPubkey,
+                    text: parsed.text,
+                    timestamp: Date.now()
+                  })
+                }
+              } catch {}
+            },
+            onStream: (fromPubkey, stream) => {
+              audioService.addPeerAudio(fromPubkey, stream)
+            },
+            onConnect: (pubkey) => {
+              const msgs = pendingMessagesRef.current
+              pendingMessagesRef.current = []
+              msgs.forEach(text => {
+                webRTCService.sendData(pubkey, JSON.stringify({ type: 'chat', text }))
+              })
+            },
+            onDisconnect: () => {}
+          })
 
-        pool.subscribeMany(SIGNAL_RELAYS, { kinds: [SIGNAL_KIND], '#p': [pubkey] }, {
-          onevent: (event: any) => {
-            try {
-              const tag = event.tags.find((t: string[]) => t[0] === 'p')
-              if (!tag) return
-              const signalData = JSON.parse(event.content)
-              webRTCService.signalPeer(event.pubkey, signalData)
-            } catch {}
-          }
-        })
+          pool.subscribeMany(SIGNAL_RELAYS, { kinds: [SIGNAL_KIND], '#p': [pubkey] }, {
+            onevent: (event: any) => {
+              try {
+                const tag = event.tags.find((t: string[]) => t[0] === 'p')
+                if (!tag) return
+                const signalData = JSON.parse(event.content)
+                webRTCService.signalPeer(event.pubkey, signalData)
+              } catch {}
+            }
+          })
+        } catch (err) {
+          console.error('Nostr init error:', err)
+          setError('Error al conectar con relays Nostr.')
+          return
+        }
       }
 
       setIsInit(true)
       setError(null)
     } catch (err) {
+      console.error('Unexpected error:', err)
       setError('Error al inicializar audio/comunicación')
-      console.error(err)
     }
   }
 

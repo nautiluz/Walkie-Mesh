@@ -11,7 +11,13 @@ export class AudioService {
   private noiseSuppressionEnabled = false
 
   async init() {
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      return
+    }
     this.audioContext = new AudioContext()
+    if (this.audioContext.state === 'suspended') {
+      await this.audioContext.resume()
+    }
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
