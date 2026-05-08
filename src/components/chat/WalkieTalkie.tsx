@@ -84,6 +84,7 @@ export function WalkieTalkie() {
 
           webRTCService.setConfig({
             onSignal: (targetPubkey, signal) => {
+              console.log('[WT] Sending signal to', targetPubkey.slice(0, 8), typeof signal)
               const event = {
                 kind: SIGNAL_KIND,
                 pubkey,
@@ -93,7 +94,12 @@ export function WalkieTalkie() {
               }
               const signed = finalizeEvent(event, sk)
               const promises = pool.publish(SIGNAL_RELAYS, signed)
-              Promise.allSettled(promises).catch(() => {})
+              Promise.allSettled(promises).then(results => {
+                results.forEach((r, i) => {
+                  if (r.status === 'rejected') console.error('[WT] Relay', i, 'rejected signal:', r.reason)
+                  else console.log('[WT] Relay', i, 'accepted signal:', r.value.slice(0, 16))
+                })
+              })
             },
             onData: (fromPubkey, data) => {
               try {
