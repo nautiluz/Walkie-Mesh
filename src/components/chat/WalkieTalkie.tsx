@@ -5,6 +5,9 @@ import { audioService } from '../../services/audio'
 import { webRTCService } from '../../services/webrtc'
 import { useSettingsStore } from '../../store/settingsStore'
 
+const SIGNAL_KIND = 2000
+const SIGNAL_RELAYS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.info']
+
 export function WalkieTalkie() {
   const { isPTTActive, setPTTActive, peers, selectedPeerId, setSelectedPeerId, chatMessages, addChatMessage } = useMeshStore()
   const { pttMode, vadEnabled } = useSettingsStore()
@@ -16,7 +19,9 @@ export function WalkieTalkie() {
   const [chatText, setChatText] = useState('')
   const chatEndRef = useRef<HTMLDivElement>(null)
   const pressTimer = useRef<number | null>(null)
-  const initialisedRef = useRef(false)
+  const initRef = useRef(false)
+  const poolRef = useRef<any>(null)
+  const pendingMessagesRef = useRef<string[]>([])
 
   const selectedPeer = peers.find(p => p.pubkey === selectedPeerId)
 
@@ -25,36 +30,127 @@ export function WalkieTalkie() {
   }, [chatMessages])
 
   useEffect(() => {
-    if (initialisedRef.current) return
-    initialisedRef.current = true
-    initAudio()
+    if (initRef.current) return
+    initRef.current = true
+    initWalkieTalkie()
     return () => {
       audioService.destroy()
       webRTCService.disconnectAll()
+      if (poolRef.current) {
+        try { poolRef.current.close(SIGNAL_RELAYS) } catch {}
+      }
     }
   }, [])
 
-  const initAudio = async () => {
+  const initWalkieTalkie = async () => {
     try {
       await audioService.init()
       const stream = audioService.getStream()
       if (stream) {
         webRTCService.setLocalStream(stream)
       }
+
+      if (profile?.privateKeyEncrypted) {
+        let privkey = profile.privateKeyEncrypted
+        if (privkey.startsWith('nsec')) {
+          const { nip19 } = await import('nostr-tools')
+          const decoded = nip19.decode(privkey)
+          if (decoded.type === 'nsec') {
+            privkey = Array.from(decoded.data as Uint8Array)
+              .map(b => b.toString(16).padStart(2, '0'))
+              .join('')
+          }
+        }
+
+        const { SimplePool, finalizeEvent } = await import('nostr-tools')
+        const pool = new SimplePool()
+        poolRef.current = pool
+        const pubkey = profile.publicKey
+        const sk = new Uint8Array(privkey.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
+
+        webRTCService.setConfig({
+          onSignal: (targetPubkey, signal) => {
+            const event = {
+              kind: SIGNAL_KIND,
+              pubkey,
+              created_at: Math.floor(Date.now() / 1000),
+              tags: [['p', targetPubkey]],
+              content: JSON.stringify(signal)
+            }
+            const signed = finalizeEvent(event, sk)
+            const promises = pool.publish(SIGNAL_RELAYS, signed)
+            Promise.allSettled(promises).catch(() => {})
+          },
+          onData: (fromPubkey, data) => {
+            try {
+              const parsed = JSON.parse(data)
+              if (parsed.type === 'chat' && parsed.text) {
+                addChatMessage(fromPubkey, {
+                  id: crypto.randomUUID(),
+                  pubkey: fromPubkey,
+                  text: parsed.text,
+                  timestamp: Date.now()
+                })
+              }
+            } catch {}
+          },
+          onStream: (fromPubkey, stream) => {
+            audioService.addPeerAudio(fromPubkey, stream)
+          },
+          onConnect: (pubkey) => {
+            const msgs = pendingMessagesRef.current
+            pendingMessagesRef.current = []
+            msgs.forEach(text => {
+              webRTCService.sendData(pubkey, JSON.stringify({ type: 'chat', text }))
+            })
+          },
+          onDisconnect: () => {}
+        })
+
+        pool.subscribeMany(SIGNAL_RELAYS, { kinds: [SIGNAL_KIND], '#p': [pubkey] }, {
+          onevent: (event: any) => {
+            try {
+              const tag = event.tags.find((t: string[]) => t[0] === 'p')
+              if (!tag) return
+              const signalData = JSON.parse(event.content)
+              webRTCService.signalPeer(event.pubkey, signalData)
+            } catch {}
+          }
+        })
+      }
+
       setIsInit(true)
       setError(null)
     } catch (err) {
-      setError('Error al inicializar audio')
+      setError('Error al inicializar audio/comunicación')
       console.error(err)
     }
   }
 
+  const sendChatMessage = useCallback(() => {
+    const text = chatText.trim()
+    if (!text || !selectedPeerId || !profile) return
+
+    if (!webRTCService.isConnected(selectedPeerId)) {
+      pendingMessagesRef.current.push(text)
+      webRTCService.startCall(selectedPeerId)
+    } else {
+      webRTCService.sendData(selectedPeerId, JSON.stringify({ type: 'chat', text }))
+    }
+
+    addChatMessage(selectedPeerId, {
+      id: crypto.randomUUID(),
+      pubkey: profile.publicKey,
+      text,
+      timestamp: Date.now()
+    })
+    setChatText('')
+  }, [chatText, selectedPeerId, profile, addChatMessage])
+
   const activatePTT = useCallback(() => {
     if (!isInit || !selectedPeerId) return
-
     const localStream = audioService.getStream()
     if (!localStream) return
-
     webRTCService.setLocalStream(localStream)
 
     if (!webRTCService.hasPeer(selectedPeerId)) {
@@ -69,22 +165,18 @@ export function WalkieTalkie() {
     setPTTActive(true)
   }, [isInit, selectedPeerId, setPTTActive])
 
-  const handlePTTStart = useCallback(() => {
-    if (pttMode === 'hold') {
-      activatePTT()
-    }
-  }, [pttMode, activatePTT])
-
   const deactivatePTT = useCallback(() => {
     audioService.stopPTT()
     setPTTActive(false)
     setIsSpeaking(false)
   }, [setPTTActive])
 
+  const handlePTTStart = useCallback(() => {
+    if (pttMode === 'hold') activatePTT()
+  }, [pttMode, activatePTT])
+
   const handlePTTEnd = useCallback(() => {
-    if (pttMode === 'hold') {
-      deactivatePTT()
-    }
+    if (pttMode === 'hold') deactivatePTT()
   }, [pttMode, deactivatePTT])
 
   const handleToggle = useCallback(() => {
@@ -99,20 +191,6 @@ export function WalkieTalkie() {
     }
   }, [pttMode, toggleLock, activatePTT, deactivatePTT])
 
-  const sendChatMessage = useCallback(() => {
-    const text = chatText.trim()
-    if (!text || !selectedPeerId || !profile) return
-
-    webRTCService.sendData(selectedPeerId, JSON.stringify({ type: 'chat', text }))
-    addChatMessage(selectedPeerId, {
-      id: crypto.randomUUID(),
-      pubkey: profile.publicKey,
-      text,
-      timestamp: Date.now()
-    })
-    setChatText('')
-  }, [chatText, selectedPeerId, profile, addChatMessage])
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -121,6 +199,7 @@ export function WalkieTalkie() {
   }
 
   const currentMessages = selectedPeerId ? (chatMessages[selectedPeerId] || []) : []
+  const webrtcConnected = selectedPeerId ? webRTCService.isConnected(selectedPeerId) : false
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)]">
@@ -130,7 +209,6 @@ export function WalkieTalkie() {
         </div>
       )}
 
-      {/* Peer list */}
       <div className="mb-3">
         <p className="text-xs text-slate-500 uppercase tracking-wide mb-2">
           Pares disponibles
@@ -142,7 +220,12 @@ export function WalkieTalkie() {
           {peers.map((peer) => (
             <button
               key={peer.id}
-              onClick={() => setSelectedPeerId(peer.pubkey)}
+              onClick={() => {
+                setSelectedPeerId(peer.pubkey)
+                if (!webRTCService.hasPeer(peer.pubkey)) {
+                  webRTCService.startCall(peer.pubkey)
+                }
+              }}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
                 selectedPeerId === peer.pubkey
                   ? 'bg-mesh-600 text-white'
@@ -155,7 +238,6 @@ export function WalkieTalkie() {
         </div>
       </div>
 
-      {/* Chat area */}
       <div className="flex-1 overflow-y-auto mb-3 space-y-2 bg-slate-900/50 rounded-xl p-3">
         {!selectedPeerId ? (
           <div className="flex items-center justify-center h-full text-xs text-slate-500">
@@ -189,7 +271,6 @@ export function WalkieTalkie() {
         <div ref={chatEndRef} />
       </div>
 
-      {/* Chat input */}
       <div className="flex gap-2 mb-3">
         <input
           type="text"
@@ -209,7 +290,6 @@ export function WalkieTalkie() {
         </button>
       </div>
 
-      {/* PTT section */}
       <div className="flex flex-col items-center gap-3 pb-4">
         <p className="text-xs text-slate-500 uppercase tracking-wide text-center">
           {selectedPeer
@@ -221,10 +301,16 @@ export function WalkieTalkie() {
           <span className={`px-2 py-1 rounded ${isInit ? 'bg-green-900/30 text-green-400' : 'bg-slate-800'}`}>
             Mic: {isInit ? 'OK' : '--'}
           </span>
-          <span className={`px-2 py-1 rounded ${webRTCService.isConnected(selectedPeerId || '') ? 'bg-green-900/30 text-green-400' : 'bg-slate-800'}`}>
-            WebRTC: {webRTCService.isConnected(selectedPeerId || '') ? 'OK' : '--'}
+          <span className={`px-2 py-1 rounded ${webrtcConnected ? 'bg-green-900/30 text-green-400' : 'bg-slate-800'}`}>
+            WebRTC: {webrtcConnected ? 'OK' : '--'}
           </span>
         </div>
+
+        {pendingMessagesRef.current.length > 0 && (
+          <p className="text-xs text-yellow-400">
+            {pendingMessagesRef.current.length} mensaje(s) pendiente(s) — conectando...
+          </p>
+        )}
 
         <button
           disabled={!selectedPeerId}
