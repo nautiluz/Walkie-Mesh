@@ -76,11 +76,11 @@ export function WalkieTalkie() {
         }
 
         try {
-          const { SimplePool, finalizeEvent } = await import('nostr-tools')
+          const { SimplePool, finalizeEvent, getPublicKey } = await import('nostr-tools')
           const pool = new SimplePool()
           poolRef.current = pool
-          const pubkey = profile.publicKey
           const sk = new Uint8Array(privkey.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
+          const pubkey = getPublicKey(sk)
 
           webRTCService.setConfig({
             onSignal: (targetPubkey, signal) => {
