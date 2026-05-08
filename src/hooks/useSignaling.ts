@@ -2,7 +2,7 @@ import { useEffect, useCallback, useState } from 'react'
 import { useMeshStore } from '../store/meshStore'
 import { useUserStore } from '../store/userStore'
 import { webRTCService } from '../services/webrtc'
-import { initSignaling, subscribeToSignals, connectToPeer } from '../services/signaling'
+import { initSignaling, subscribeToSignals, publishPresence, subscribeToPresence, connectToPeer } from '../services/signaling'
 import { bluetoothService } from '../services/bluetooth'
 import { closePool } from '../services/nostr'
 
@@ -55,7 +55,32 @@ export function useSignaling() {
         }
       })
 
+      const seen = new Set<string>()
+      subscribeToPresence((pubkey, username) => {
+        if (pubkey === profile!.publicKey) return
+        if (seen.has(pubkey)) return
+        seen.add(pubkey)
+        addPeer({
+          id: pubkey,
+          pubkey,
+          username,
+          signal: -50,
+          protocol: 'nostr',
+          lastSeen: Date.now()
+        })
+      })
+
+      publishPresence(profile!.username || profile!.displayName || 'Peer')
+
+      const presenceInterval = setInterval(() => {
+        publishPresence(profile!.username || profile!.displayName || 'Peer')
+      }, 30000)
+
       setIsInitialized(true)
+
+      return () => {
+        clearInterval(presenceInterval)
+      }
     } catch (err) {
       setError('Error al inicializar mesh')
       console.error(err)

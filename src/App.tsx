@@ -25,7 +25,7 @@ const isGitHubPages = window.location.hostname.includes('github.io')
 const Router = isGitHubPages ? HashRouter : BrowserRouter
 
 function HomePage() {
-  const { isInitialized, startBluetoothDiscovery, stopBluetoothDiscovery, isBluetoothAvailable } = useSignaling()
+  const { isInitialized, error: meshError, startBluetoothDiscovery, stopBluetoothDiscovery, isBluetoothAvailable } = useSignaling()
   const [btScanning, setBtScanning] = useState(false)
 
   return (
@@ -35,7 +35,10 @@ function HomePage() {
           Inicializando mesh...
         </div>
       )}
-      {isBluetoothAvailable && (
+      {meshError && (
+        <div className="bg-red-900/30 text-red-400 px-4 py-2 rounded-lg text-sm text-center">{meshError}</div>
+      )}
+      {isBluetoothAvailable ? (
         <button
           onClick={async () => {
             if (btScanning) {
@@ -52,6 +55,15 @@ function HomePage() {
         >
           {btScanning ? 'Escaneando...' : 'Buscar dispositivos Bluetooth'}
         </button>
+      ) : (
+        <div className="bg-slate-800/30 text-slate-500 px-4 py-2 rounded-lg text-sm text-center">
+          Bluetooth no disponible en este navegador. Usa Chrome/Edge en Android.
+        </div>
+      )}
+      {isInitialized && (
+        <div className="bg-green-900/20 text-green-400 px-4 py-2 rounded-lg text-xs text-center">
+          Mesh activo — buscando pares en relays Nostr...
+        </div>
       )}
       <NetworkGraph />
       <ConnectionStatus />

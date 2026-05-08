@@ -23,7 +23,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   vadEnabled: true,
   noiseSuppression: true,
   autoBitrate: true,
-  telemetryEnabled: false,
+  telemetryEnabled: true,
   pttMode: 'hold',
   selectedRelays: [
     'wss://nos.lol',
