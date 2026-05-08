@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { PeerInfo, SignalMetrics } from '../types'
+import type { PeerInfo, SignalMetrics, ChatMessage } from '../types'
 
 interface MeshState {
   peers: PeerInfo[]
@@ -7,6 +7,8 @@ interface MeshState {
   dominantProtocol: 'bluetooth' | 'webrtc' | 'nostr'
   signalMetrics: SignalMetrics | null
   isPTTActive: boolean
+  selectedPeerId: string | null
+  chatMessages: Record<string, ChatMessage[]>
 
   setPeers: (peers: PeerInfo[]) => void
   addPeer: (peer: PeerInfo) => void
@@ -16,6 +18,8 @@ interface MeshState {
   setDominantProtocol: (protocol: 'bluetooth' | 'webrtc' | 'nostr') => void
   setSignalMetrics: (metrics: SignalMetrics) => void
   setPTTActive: (active: boolean) => void
+  setSelectedPeerId: (id: string | null) => void
+  addChatMessage: (peerPubkey: string, msg: ChatMessage) => void
 }
 
 export const useMeshStore = create<MeshState>((set) => ({
@@ -24,6 +28,8 @@ export const useMeshStore = create<MeshState>((set) => ({
   dominantProtocol: 'nostr',
   signalMetrics: null,
   isPTTActive: false,
+  selectedPeerId: null,
+  chatMessages: {},
 
   setPeers: (peers) => set({ peers }),
 
@@ -53,5 +59,18 @@ export const useMeshStore = create<MeshState>((set) => ({
   setOnline: (online) => set({ isOnline: online }),
   setDominantProtocol: (protocol) => set({ dominantProtocol: protocol }),
   setSignalMetrics: (metrics) => set({ signalMetrics: metrics }),
-  setPTTActive: (active) => set({ isPTTActive: active })
+  setPTTActive: (active) => set({ isPTTActive: active }),
+
+  setSelectedPeerId: (id) => set({ selectedPeerId: id }),
+
+  addChatMessage: (peerPubkey, msg) =>
+    set((state) => {
+      const existing = state.chatMessages[peerPubkey] || []
+      return {
+        chatMessages: {
+          ...state.chatMessages,
+          [peerPubkey]: [...existing, msg]
+        }
+      }
+    })
 }))

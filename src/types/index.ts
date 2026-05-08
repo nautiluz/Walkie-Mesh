@@ -83,3 +83,10 @@ export interface SignalMetrics {
   bitrate: number
   recommendedBitrate: number
 }
+
+export interface ChatMessage {
+  id: string
+  pubkey: string
+  text: string
+  timestamp: number
+}

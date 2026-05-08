@@ -2,13 +2,14 @@ import { useEffect, useCallback, useState } from 'react'
 import { useMeshStore } from '../store/meshStore'
 import { useUserStore } from '../store/userStore'
 import { webRTCService } from '../services/webrtc'
-import { initSignaling, subscribeToSignals, publishPresence, subscribeToPresence, connectToPeer } from '../services/signaling'
+import { initSignaling, subscribeToSignals, publishPresence, subscribeToPresence, sendSignal } from '../services/signaling'
+import { audioService } from '../services/audio'
 import { bluetoothService } from '../services/bluetooth'
 import { closePool } from '../services/nostr'
 
 export function useSignaling() {
   const { profile } = useUserStore()
-  const { peers, addPeer } = useMeshStore()
+  const { peers, addPeer, addChatMessage } = useMeshStore()
   const [isInitialized, setIsInitialized] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [btAvailable, setBtAvailable] = useState(false)
@@ -39,6 +40,36 @@ export function useSignaling() {
       const { SimplePool } = await import('nostr-tools')
       const pool = new SimplePool()
       initSignaling(privkey, pool)
+
+      webRTCService.setConfig({
+        onSignal: (pubkey, signal) => sendSignal(pubkey, signal),
+        onData: (pubkey, data) => {
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.type === 'chat' && parsed.text) {
+              addChatMessage(pubkey, {
+                id: crypto.randomUUID(),
+                pubkey,
+                text: parsed.text,
+                timestamp: Date.now()
+              })
+            }
+          } catch {}
+        },
+        onStream: (pubkey, stream) => {
+          audioService.addPeerAudio(pubkey, stream)
+        },
+        onConnect: (pubkey) => {
+          addPeer({
+            id: pubkey,
+            pubkey,
+            username: pubkey.slice(0, 8),
+            signal: -45,
+            protocol: 'webrtc',
+            lastSeen: Date.now()
+          })
+        }
+      })
 
       subscribeToSignals((fromPubkey, signal) => {
         webRTCService.signalPeer(fromPubkey, signal)
@@ -89,23 +120,10 @@ export function useSignaling() {
 
   const connectToRemotePeer = useCallback(async (targetPubkey: string) => {
     const peerStream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null)
-    connectToPeer(
-      targetPubkey,
-      true,
-      peerStream,
-      (data) => console.log('Data from', targetPubkey, data),
-      (_stream) => {
-        const { addPeer: addToMesh } = useMeshStore.getState()
-        addToMesh({
-          id: targetPubkey,
-          pubkey: targetPubkey,
-          username: targetPubkey.slice(0, 8),
-          signal: -45,
-          protocol: 'webrtc',
-          lastSeen: Date.now()
-        })
-      }
-    )
+    if (peerStream) {
+      webRTCService.setLocalStream(peerStream)
+    }
+    webRTCService.startCall(targetPubkey)
   }, [])
 
   const startBluetoothDiscovery = useCallback(async () => {
