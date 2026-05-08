@@ -52,9 +52,9 @@ export async function publishEvent(event: Omit<Event, 'id' | 'sig'>) {
   return p.publish(relayUrls, event as Event)
 }
 
-export async function subscribeEvents(filters: Filter[], onEvent: (event: Event) => void) {
+export async function subscribeEvents(filter: Filter, onEvent: (event: Event) => void) {
   const p = getPool()
-  const sub = p.subscribeMany(relayUrls, filters as unknown as Filter, { onevent: onEvent })
+  const sub = p.subscribeMany(relayUrls, filter, { onevent: onEvent })
   return sub
 }
 

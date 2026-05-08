@@ -24,11 +24,11 @@ const SIGNAL_RELAYS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nos
 export function subscribeToSignals(onSignal: (fromPubkey: string, signal: SimplePeer.SignalData) => void) {
   if (!relayPool || !publicKey) return null
 
-  const filters = [{ kinds: [SIGNAL_KIND], '#p': [publicKey] }]
+  const filter = { kinds: [SIGNAL_KIND], '#p': [publicKey] }
   try {
     const sub = relayPool.subscribeMany(
       SIGNAL_RELAYS,
-      filters,
+      filter,
       {
         onevent: (event: any) => {
           try {
@@ -89,9 +89,9 @@ export async function publishPresence(username: string) {
 
 export function subscribeToPresence(onPresence: (pubkey: string, username: string) => void) {
   if (!relayPool) return null
-  const filters = [{ kinds: [PRESENCE_KIND], limit: 100 }]
+  const filter = { kinds: [PRESENCE_KIND], limit: 100 }
   try {
-    return relayPool.subscribeMany(SIGNAL_RELAYS, filters, {
+    return relayPool.subscribeMany(SIGNAL_RELAYS, filter, {
       onevent: (event: any) => {
         try {
           const data = JSON.parse(event.content)
