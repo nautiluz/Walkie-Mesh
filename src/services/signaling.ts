@@ -18,25 +18,32 @@ export function getPublicKeyForSignaling() {
   return publicKey
 }
 
+const SIGNAL_RELAYS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.info']
+
 export function subscribeToSignals(onSignal: (fromPubkey: string, signal: SimplePeer.SignalData) => void) {
   if (!relayPool || !publicKey) return null
 
   const filters = [{ kinds: [SIGNAL_KIND], '#p': [publicKey] }]
-  const sub = relayPool.subscribeMany(
-    ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.info'],
-    filters,
-    {
-      onevent: (event: any) => {
-        try {
-          const tag = event.tags.find((t: string[]) => t[0] === 'p')
-          if (!tag) return
-          const signalData = JSON.parse(event.content)
-          onSignal(event.pubkey, signalData)
-        } catch { /* ignore malformed signals */ }
+  try {
+    const sub = relayPool.subscribeMany(
+      SIGNAL_RELAYS,
+      filters,
+      {
+        onevent: (event: any) => {
+          try {
+            const tag = event.tags.find((t: string[]) => t[0] === 'p')
+            if (!tag) return
+            const signalData = JSON.parse(event.content)
+            onSignal(event.pubkey, signalData)
+          } catch { /* ignore malformed signals */ }
+        }
       }
-    }
-  )
-  return sub
+    )
+    return sub
+  } catch (err) {
+    console.error('Signal subscription error:', err)
+    return null
+  }
 }
 
 export async function sendSignal(targetPubkey: string, signal: SimplePeer.SignalData) {
@@ -50,12 +57,11 @@ export async function sendSignal(targetPubkey: string, signal: SimplePeer.Signal
     content: JSON.stringify(signal)
   }
 
-  const { finalizeEvent } = await import('nostr-tools')
-  const sk = new Uint8Array(privateKeyHex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
-  const signedEvent = finalizeEvent(event, sk)
-
   try {
-    await relayPool.publish(['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.info'], signedEvent)
+    const { finalizeEvent } = await import('nostr-tools')
+    const sk = new Uint8Array(privateKeyHex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
+    const signedEvent = finalizeEvent(event, sk)
+    await relayPool.publish(SIGNAL_RELAYS, signedEvent)
   } catch (err) {
     console.error('Signal publish error:', err)
   }

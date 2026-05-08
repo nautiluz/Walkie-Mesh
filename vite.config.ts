@@ -27,6 +27,7 @@ export default defineConfig({
           { src: './icons/icon-512.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'maskable' }
         ]
       },
+      selfDestroying: true,
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         runtimeCaching: [
