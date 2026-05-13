@@ -21,6 +21,7 @@ export function WalkieTalkie() {
   const pressTimer = useRef<number | null>(null)
   const initRef = useRef(false)
   const poolRef = useRef<any>(null)
+  const subRef = useRef<any>(null)
   const pendingMessagesRef = useRef<string[]>([])
 
   const selectedPeer = peers.find(p => p.pubkey === selectedPeerId)
@@ -36,6 +37,9 @@ export function WalkieTalkie() {
     return () => {
       audioService.destroy()
       webRTCService.disconnectAll()
+      if (subRef.current) {
+        try { subRef.current.unsub?.() } catch {}
+      }
       if (poolRef.current) {
         try { poolRef.current.close(SIGNAL_RELAYS) } catch {}
       }
@@ -127,16 +131,19 @@ export function WalkieTalkie() {
             onDisconnect: () => {}
           })
 
-          pool.subscribeMany(SIGNAL_RELAYS, { kinds: [SIGNAL_KIND], '#p': [pubkey] }, {
+          const sub = pool.subscribeMany(SIGNAL_RELAYS, { kinds: [SIGNAL_KIND], '#p': [pubkey] }, {
             onevent: (event: any) => {
+              console.log('[WT] Incoming signal from', event.pubkey.slice(0, 8), 'kind:', event.kind)
               try {
-                const tag = event.tags.find((t: string[]) => t[0] === 'p')
-                if (!tag) return
                 const signalData = JSON.parse(event.content)
                 webRTCService.signalPeer(event.pubkey, signalData)
-              } catch {}
+              } catch (e) {
+                console.error('[WT] Failed to parse signal:', e)
+              }
             }
           })
+          subRef.current = sub
+          console.log('[WT] Signal subscription active for', pubkey.slice(0, 8))
         } catch (err) {
           console.error('Nostr init error:', err)
           setError('Error al conectar con relays Nostr.')

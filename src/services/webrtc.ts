@@ -1,5 +1,18 @@
 import SimplePeer from 'simple-peer'
 
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  }
+]
+
 export interface PeerConnection {
   peer: SimplePeer.Instance
   pubkey: string
@@ -66,6 +79,7 @@ class WebRTCService {
 
   startCall(pubkey: string): boolean {
     if (this.peers.has(pubkey)) return false
+    console.log('[WRT] startCall', pubkey.slice(0, 8))
     this.createPeerInternal(pubkey, true)
     return true
   }
@@ -73,49 +87,60 @@ class WebRTCService {
   signalPeer(pubkey: string, signal: SimplePeer.SignalData) {
     const conn = this.peers.get(pubkey)
     if (conn) {
+      const kind = (signal as any).type || 'candidate'
+      console.log('[WRT] signalPeer existing', pubkey.slice(0, 8), kind)
       conn.peer.signal(signal)
     } else {
+      console.log('[WRT] signalPeer new peer', pubkey.slice(0, 8))
       this.createPeerInternal(pubkey, false)
       const newConn = this.peers.get(pubkey)
-      if (newConn) newConn.peer.signal(signal)
+      if (newConn) {
+        newConn.peer.signal(signal)
+      }
     }
   }
 
   private createPeerInternal(pubkey: string, initiator: boolean) {
+    console.log('[WRT] createPeerInternal', pubkey.slice(0, 8), initiator ? 'initiator' : 'responder')
     const peer = new SimplePeer({
       initiator,
       stream: this.localStream || undefined,
       trickle: true,
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
-      }
+      config: { iceServers: ICE_SERVERS }
     })
 
-    peer.on('signal', (signal) => this.config.onSignal(pubkey, signal))
+    peer.on('signal', (signal) => {
+      const kind = (signal as any).type || 'candidate'
+      console.log('[WRT] signal event', pubkey.slice(0, 8), kind)
+      this.config.onSignal(pubkey, signal)
+    })
 
     peer.on('data', (data) => {
       const msg = data instanceof Uint8Array ? new TextDecoder().decode(data) : data.toString()
+      console.log('[WRT] data received from', pubkey.slice(0, 8), msg.slice(0, 60))
       this.config.onData(pubkey, msg)
     })
 
-    peer.on('stream', (stream) => this.config.onStream(pubkey, stream))
+    peer.on('stream', (stream) => {
+      console.log('[WRT] stream received from', pubkey.slice(0, 8))
+      this.config.onStream(pubkey, stream)
+    })
 
     peer.on('connect', () => {
+      console.log('[WRT] connected to', pubkey.slice(0, 8))
       const conn = this.peers.get(pubkey)
       if (conn) conn.connected = true
       this.config.onConnect(pubkey)
     })
 
     peer.on('close', () => {
+      console.log('[WRT] disconnected from', pubkey.slice(0, 8))
       this.peers.delete(pubkey)
       this.config.onDisconnect(pubkey)
     })
 
     peer.on('error', (err) => {
-      console.error(`WebRTC error with ${pubkey}:`, err)
+      console.error(`[WRT] error with ${pubkey.slice(0, 8)}:`, err)
     })
 
     this.peers.set(pubkey, { peer, pubkey, connected: false })
