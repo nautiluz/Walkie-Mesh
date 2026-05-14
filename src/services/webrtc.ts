@@ -1,5 +1,3 @@
-import SimplePeer from 'simple-peer'
-
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
@@ -14,13 +12,14 @@ const ICE_SERVERS: RTCIceServer[] = [
 ]
 
 export interface PeerConnection {
-  peer: SimplePeer.Instance
+  pc: RTCPeerConnection
   pubkey: string
   connected: boolean
+  dataChannel: RTCDataChannel | null
 }
 
 export interface WebRTCConfig {
-  onSignal: (pubkey: string, signal: SimplePeer.SignalData) => void
+  onSignal: (pubkey: string, signal: { type: string; sdp?: string; candidate?: string; sdpMid?: string; sdpMLineIndex?: number }) => void
   onData: (pubkey: string, data: string) => void
   onStream: (pubkey: string, stream: MediaStream) => void
   onConnect: (pubkey: string) => void
@@ -50,29 +49,8 @@ class WebRTCService {
     this.peers.forEach((conn) => {
       if (conn.connected) {
         stream.getTracks().forEach(track => {
-          try { conn.peer.addTrack(track, stream) } catch {}
+          try { conn.pc.addTrack(track, stream) } catch {}
         })
-      }
-    })
-  }
-
-  createPeer(
-    pubkey: string,
-    initiator: boolean,
-    _onSignal: (signal: SimplePeer.SignalData) => void,
-    _onData: (data: string) => void,
-    _onConnect?: () => void,
-    _onDisconnect?: () => void
-  ): SimplePeer.Instance {
-    this.createPeerInternal(pubkey, initiator)
-    const conn = this.peers.get(pubkey)
-    return conn!.peer
-  }
-
-  broadcast(data: string) {
-    this.peers.forEach((conn) => {
-      if (conn.connected) {
-        conn.peer.send(data)
       }
     })
   }
@@ -84,72 +62,132 @@ class WebRTCService {
     return true
   }
 
-  signalPeer(pubkey: string, signal: SimplePeer.SignalData) {
+  signalPeer(pubkey: string, signal: any) {
     const conn = this.peers.get(pubkey)
     if (conn) {
-      const kind = (signal as any).type || 'candidate'
+      const kind = signal.type || 'candidate'
       console.log('[WRT] signalPeer existing', pubkey.slice(0, 8), kind)
-      conn.peer.signal(signal)
+      this.applySignal(conn, signal)
     } else {
       console.log('[WRT] signalPeer new peer', pubkey.slice(0, 8))
       this.createPeerInternal(pubkey, false)
       const newConn = this.peers.get(pubkey)
       if (newConn) {
-        newConn.peer.signal(signal)
+        this.applySignal(newConn, signal)
       }
+    }
+  }
+
+  private async applySignal(conn: PeerConnection, signal: any) {
+    try {
+      if (signal.type === 'offer') {
+        await conn.pc.setRemoteDescription(new RTCSessionDescription(signal))
+        const answer = await conn.pc.createAnswer()
+        await conn.pc.setLocalDescription(answer)
+        this.config.onSignal(conn.pubkey, { type: 'answer', sdp: answer.sdp || '' })
+      } else if (signal.type === 'answer') {
+        await conn.pc.setRemoteDescription(new RTCSessionDescription(signal))
+      } else if (signal.candidate) {
+        try {
+          await conn.pc.addIceCandidate(new RTCIceCandidate(signal))
+        } catch (e) {
+          // ignore invalid candidates
+        }
+      }
+    } catch (err) {
+      console.error('[WRT] applySignal error:', err)
     }
   }
 
   private createPeerInternal(pubkey: string, initiator: boolean) {
     console.log('[WRT] createPeerInternal', pubkey.slice(0, 8), initiator ? 'initiator' : 'responder')
-    const peer = new SimplePeer({
-      initiator,
-      stream: this.localStream || undefined,
-      trickle: true,
-      config: { iceServers: ICE_SERVERS }
-    })
 
-    peer.on('signal', (signal) => {
-      const kind = (signal as any).type || 'candidate'
-      console.log('[WRT] signal event', pubkey.slice(0, 8), kind)
-      this.config.onSignal(pubkey, signal)
-    })
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
+    let dataChannel: RTCDataChannel | null = null
 
-    peer.on('data', (data) => {
-      const msg = data instanceof Uint8Array ? new TextDecoder().decode(data) : data.toString()
-      console.log('[WRT] data received from', pubkey.slice(0, 8), msg.slice(0, 60))
-      this.config.onData(pubkey, msg)
-    })
+    if (this.localStream) {
+      this.localStream.getTracks().forEach(track => {
+        pc.addTrack(track, this.localStream!)
+      })
+    }
 
-    peer.on('stream', (stream) => {
+    if (initiator) {
+      dataChannel = pc.createDataChannel('chat')
+      dataChannel.onopen = () => {
+        console.log('[WRT] dataChannel open', pubkey.slice(0, 8))
+        const conn = this.peers.get(pubkey)
+        if (conn) conn.connected = true
+        this.config.onConnect(pubkey)
+      }
+      dataChannel.onclose = () => {
+        console.log('[WRT] dataChannel closed', pubkey.slice(0, 8))
+      }
+      dataChannel.onmessage = (event) => {
+        console.log('[WRT] data received from', pubkey.slice(0, 8), String(event.data).slice(0, 60))
+        this.config.onData(pubkey, String(event.data))
+      }
+    } else {
+      pc.ondatachannel = (event) => {
+        dataChannel = event.channel
+        dataChannel.onopen = () => {
+          console.log('[WRT] dataChannel open', pubkey.slice(0, 8))
+          const conn = this.peers.get(pubkey)
+          if (conn) conn.connected = true
+          this.config.onConnect(pubkey)
+        }
+        dataChannel.onclose = () => {
+          console.log('[WRT] dataChannel closed', pubkey.slice(0, 8))
+        }
+        dataChannel.onmessage = (event) => {
+          console.log('[WRT] data received from', pubkey.slice(0, 8), String(event.data).slice(0, 60))
+          this.config.onData(pubkey, String(event.data))
+        }
+      }
+    }
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.config.onSignal(pubkey, {
+          type: 'candidate',
+          candidate: event.candidate.candidate,
+          sdpMid: event.candidate.sdpMid || '',
+          sdpMLineIndex: event.candidate.sdpMLineIndex || 0
+        })
+      }
+    }
+
+    pc.ontrack = (event) => {
       console.log('[WRT] stream received from', pubkey.slice(0, 8))
-      this.config.onStream(pubkey, stream)
-    })
+      if (event.streams[0]) {
+        this.config.onStream(pubkey, event.streams[0])
+      }
+    }
 
-    peer.on('connect', () => {
-      console.log('[WRT] connected to', pubkey.slice(0, 8))
-      const conn = this.peers.get(pubkey)
-      if (conn) conn.connected = true
-      this.config.onConnect(pubkey)
-    })
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+        console.log('[WRT] disconnected from', pubkey.slice(0, 8))
+        this.peers.delete(pubkey)
+        this.config.onDisconnect(pubkey)
+      }
+    }
 
-    peer.on('close', () => {
-      console.log('[WRT] disconnected from', pubkey.slice(0, 8))
-      this.peers.delete(pubkey)
-      this.config.onDisconnect(pubkey)
-    })
+    const conn: PeerConnection = { pc, pubkey, connected: false, dataChannel }
+    this.peers.set(pubkey, conn)
 
-    peer.on('error', (err) => {
-      console.error(`[WRT] error with ${pubkey.slice(0, 8)}:`, err)
-    })
-
-    this.peers.set(pubkey, { peer, pubkey, connected: false })
+    if (initiator) {
+      pc.createOffer()
+        .then(offer => pc.setLocalDescription(offer))
+        .then(() => {
+          this.config.onSignal(pubkey, { type: 'offer', sdp: pc.localDescription?.sdp || '' })
+        })
+        .catch(err => console.error('[WRT] createOffer error:', err))
+    }
   }
 
   sendData(pubkey: string, data: string) {
     const conn = this.peers.get(pubkey)
-    if (conn && conn.connected) {
-      conn.peer.send(data)
+    if (conn && conn.dataChannel && conn.dataChannel.readyState === 'open') {
+      conn.dataChannel.send(data)
     }
   }
 
@@ -178,13 +216,21 @@ class WebRTCService {
   disconnect(pubkey: string) {
     const conn = this.peers.get(pubkey)
     if (conn) {
-      conn.peer.destroy()
+      conn.pc.close()
       this.peers.delete(pubkey)
     }
   }
 
+  broadcast(data: string) {
+    this.peers.forEach((conn) => {
+      if (conn.dataChannel && conn.dataChannel.readyState === 'open') {
+        conn.dataChannel.send(data)
+      }
+    })
+  }
+
   disconnectAll() {
-    this.peers.forEach((conn) => conn.peer.destroy())
+    this.peers.forEach((conn) => conn.pc.close())
     this.peers.clear()
   }
 
