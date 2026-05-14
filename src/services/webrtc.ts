@@ -129,9 +129,10 @@ class WebRTCService {
     } else {
       pc.ondatachannel = (event) => {
         dataChannel = event.channel
+        const conn = this.peers.get(pubkey)
+        if (conn) conn.dataChannel = dataChannel
         dataChannel.onopen = () => {
           console.log('[WRT] dataChannel open', pubkey.slice(0, 8))
-          const conn = this.peers.get(pubkey)
           if (conn) conn.connected = true
           this.config.onConnect(pubkey)
         }
