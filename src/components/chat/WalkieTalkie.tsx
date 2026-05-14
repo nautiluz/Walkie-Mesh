@@ -38,11 +38,12 @@ export function WalkieTalkie() {
       audioService.destroy()
       webRTCService.disconnectAll()
       if (subRef.current) {
-        try { subRef.current.unsub?.() } catch {}
+        try { subRef.current.close() } catch {}
       }
       if (poolRef.current) {
         try { poolRef.current.close(SIGNAL_RELAYS) } catch {}
       }
+      initRef.current = false
     }
   }, [])
 
