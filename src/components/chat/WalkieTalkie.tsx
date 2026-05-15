@@ -180,9 +180,14 @@ export function WalkieTalkie() {
           content: JSON.stringify({ username: profile?.username || profile?.displayName || 'Peer', online: true })
         }
         const signedPresence = finalizeEvent(presenceEvent, sk)
-        Promise.allSettled(pool.publish(SIGNAL_RELAYS, signedPresence)).catch(() => {})
+        Promise.allSettled(pool.publish(SIGNAL_RELAYS, signedPresence)).then(results => {
+          results.forEach((r, i) => {
+            if (r.status === 'rejected') console.error('[WT] Presence publish rejected on relay', i, r.reason)
+            else console.log('[WT] Presence published on relay', i, String(r.value).slice(0, 16))
+          })
+        })
 
-        console.log('[WT] Signal+Presence subscription active for', pubkey.slice(0, 8))
+        console.log('[WT] Init complete for', pubkey.slice(0, 8))
       } catch (err) {
         console.error('Nostr init error:', err)
         setError('Error al conectar con relays Nostr.')
