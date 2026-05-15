@@ -48,116 +48,113 @@ export function WalkieTalkie() {
   }, [])
 
   const initWalkieTalkie = async () => {
+    let audioOk = false
     try {
-      try {
-        await audioService.init()
-      } catch (err) {
-        console.error('Audio init error:', err)
-        setError('Error al acceder al micrófono. Verifica permisos.')
-        return
-      }
+      await audioService.init()
+      audioOk = true
+    } catch (err) {
+      console.error('Audio init error (non-fatal):', err)
+    }
 
+    if (audioOk) {
       const stream = audioService.getStream()
       if (stream) {
         webRTCService.setLocalStream(stream)
       }
+    }
 
-      if (profile?.privateKeyEncrypted) {
-        let privkey = profile.privateKeyEncrypted
-        try {
-          if (privkey.startsWith('nsec')) {
-            const { nip19 } = await import('nostr-tools')
-            const decoded = nip19.decode(privkey)
-            if (decoded.type === 'nsec') {
-              privkey = Array.from(decoded.data as Uint8Array)
-                .map(b => b.toString(16).padStart(2, '0'))
-                .join('')
-            }
+    if (profile?.privateKeyEncrypted) {
+      let privkey = profile.privateKeyEncrypted
+      try {
+        if (privkey.startsWith('nsec')) {
+          const { nip19 } = await import('nostr-tools')
+          const decoded = nip19.decode(privkey)
+          if (decoded.type === 'nsec') {
+            privkey = Array.from(decoded.data as Uint8Array)
+              .map(b => b.toString(16).padStart(2, '0'))
+              .join('')
           }
-        } catch (err) {
-          console.error('Key decode error:', err)
-          setError('Error al decodificar llave Nostr.')
-          return
         }
-
-        try {
-          const { SimplePool, finalizeEvent, getPublicKey } = await import('nostr-tools')
-          const pool = new SimplePool()
-          poolRef.current = pool
-          const sk = new Uint8Array(privkey.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
-          const pubkey = getPublicKey(sk)
-
-          webRTCService.setConfig({
-            onSignal: (targetPubkey, signal) => {
-              console.log('[WT] Sending signal to', targetPubkey.slice(0, 8), typeof signal)
-              const event = {
-                kind: SIGNAL_KIND,
-                pubkey,
-                created_at: Math.floor(Date.now() / 1000),
-                tags: [['p', targetPubkey]],
-                content: JSON.stringify(signal)
-              }
-              const signed = finalizeEvent(event, sk)
-              const promises = pool.publish(SIGNAL_RELAYS, signed)
-              Promise.allSettled(promises).then(results => {
-                results.forEach((r, i) => {
-                  if (r.status === 'rejected') console.error('[WT] Relay', i, 'rejected signal:', r.reason)
-                  else console.log('[WT] Relay', i, 'accepted signal:', r.value.slice(0, 16))
-                })
-              })
-            },
-            onData: (fromPubkey, data) => {
-              try {
-                const parsed = JSON.parse(data)
-                if (parsed.type === 'chat' && parsed.text) {
-                  addChatMessage(fromPubkey, {
-                    id: crypto.randomUUID(),
-                    pubkey: fromPubkey,
-                    text: parsed.text,
-                    timestamp: Date.now()
-                  })
-                }
-              } catch {}
-            },
-            onStream: (fromPubkey, stream) => {
-              audioService.addPeerAudio(fromPubkey, stream)
-            },
-            onConnect: (pubkey) => {
-              const msgs = pendingMessagesRef.current
-              pendingMessagesRef.current = []
-              msgs.forEach(text => {
-                webRTCService.sendData(pubkey, JSON.stringify({ type: 'chat', text }))
-              })
-            },
-            onDisconnect: () => {}
-          })
-
-          const sub = pool.subscribeMany(SIGNAL_RELAYS, { kinds: [SIGNAL_KIND], '#p': [pubkey] }, {
-            onevent: (event: any) => {
-              console.log('[WT] Incoming signal from', event.pubkey.slice(0, 8), 'kind:', event.kind)
-              try {
-                const signalData = JSON.parse(event.content)
-                webRTCService.signalPeer(event.pubkey, signalData)
-              } catch (e) {
-                console.error('[WT] Failed to parse signal:', e)
-              }
-            }
-          })
-          subRef.current = sub
-          console.log('[WT] Signal subscription active for', pubkey.slice(0, 8))
-        } catch (err) {
-          console.error('Nostr init error:', err)
-          setError('Error al conectar con relays Nostr.')
-          return
-        }
+      } catch (err) {
+        console.error('Key decode error:', err)
+        setError('Error al decodificar llave Nostr.')
+        return
       }
 
-      setIsInit(true)
-      setError(null)
-    } catch (err) {
-      console.error('Unexpected error:', err)
-      setError('Error al inicializar audio/comunicación')
+      try {
+        const { SimplePool, finalizeEvent, getPublicKey } = await import('nostr-tools')
+        const pool = new SimplePool()
+        poolRef.current = pool
+        const sk = new Uint8Array(privkey.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
+        const pubkey = getPublicKey(sk)
+
+        webRTCService.setConfig({
+          onSignal: (targetPubkey, signal) => {
+            console.log('[WT] Sending signal to', targetPubkey.slice(0, 8), typeof signal)
+            const event = {
+              kind: SIGNAL_KIND,
+              pubkey,
+              created_at: Math.floor(Date.now() / 1000),
+              tags: [['p', targetPubkey]],
+              content: JSON.stringify(signal)
+            }
+            const signed = finalizeEvent(event, sk)
+            const promises = pool.publish(SIGNAL_RELAYS, signed)
+            Promise.allSettled(promises).then(results => {
+              results.forEach((r, i) => {
+                if (r.status === 'rejected') console.error('[WT] Relay', i, 'rejected signal:', r.reason)
+                else console.log('[WT] Relay', i, 'accepted signal:', String(r.value).slice(0, 16))
+              })
+            })
+          },
+          onData: (fromPubkey, data) => {
+            try {
+              const parsed = JSON.parse(data)
+              if (parsed.type === 'chat' && parsed.text) {
+                addChatMessage(fromPubkey, {
+                  id: crypto.randomUUID(),
+                  pubkey: fromPubkey,
+                  text: parsed.text,
+                  timestamp: Date.now()
+                })
+              }
+            } catch {}
+          },
+          onStream: (fromPubkey, stream) => {
+            audioService.addPeerAudio(fromPubkey, stream)
+          },
+          onConnect: (pubkey) => {
+            const msgs = pendingMessagesRef.current
+            pendingMessagesRef.current = []
+            msgs.forEach(text => {
+              webRTCService.sendData(pubkey, JSON.stringify({ type: 'chat', text }))
+            })
+          },
+          onDisconnect: () => {}
+        })
+
+        const sub = pool.subscribeMany(SIGNAL_RELAYS, { kinds: [SIGNAL_KIND], '#p': [pubkey] }, {
+          onevent: (event: any) => {
+            console.log('[WT] Incoming signal from', event.pubkey.slice(0, 8), 'kind:', event.kind)
+            try {
+              const signalData = JSON.parse(event.content)
+              webRTCService.signalPeer(event.pubkey, signalData)
+            } catch (e) {
+              console.error('[WT] Failed to parse signal:', e)
+            }
+          }
+        })
+        subRef.current = sub
+        console.log('[WT] Signal subscription active for', pubkey.slice(0, 8))
+      } catch (err) {
+        console.error('Nostr init error:', err)
+        setError('Error al conectar con relays Nostr.')
+        return
+      }
     }
+
+    setIsInit(true)
+    if (!audioOk) setError('Micrófono no disponible. Los mensajes de texto funcionan.')
   }
 
   const sendChatMessage = useCallback(() => {
