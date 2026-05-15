@@ -19,11 +19,24 @@ export interface PeerConnection {
 }
 
 export interface WebRTCConfig {
-  onSignal: (pubkey: string, signal: { type: string; sdp?: string; candidate?: string; sdpMid?: string; sdpMLineIndex?: number }) => void
+  onSignal: (pubkey: string, signal: { type: string; sdp?: string }) => void
   onData: (pubkey: string, data: string) => void
   onStream: (pubkey: string, stream: MediaStream) => void
   onConnect: (pubkey: string) => void
   onDisconnect: (pubkey: string) => void
+}
+
+function waitForIceGathering(pc: RTCPeerConnection): Promise<void> {
+  if (pc.iceGatheringState === 'complete') return Promise.resolve()
+  return new Promise(resolve => {
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === 'complete') {
+        pc.onicegatheringstatechange = null
+        resolve()
+      }
+    }
+    setTimeout(resolve, 3000)
+  })
 }
 
 class WebRTCService {
@@ -65,8 +78,7 @@ class WebRTCService {
   signalPeer(pubkey: string, signal: any) {
     const conn = this.peers.get(pubkey)
     if (conn) {
-      const kind = signal.type || 'candidate'
-      console.log('[WRT] signalPeer existing', pubkey.slice(0, 8), kind)
+      console.log('[WRT] signalPeer existing', pubkey.slice(0, 8), signal.type || 'candidate')
       this.applySignal(conn, signal)
     } else {
       console.log('[WRT] signalPeer new peer', pubkey.slice(0, 8))
@@ -84,15 +96,10 @@ class WebRTCService {
         await conn.pc.setRemoteDescription(new RTCSessionDescription(signal))
         const answer = await conn.pc.createAnswer()
         await conn.pc.setLocalDescription(answer)
-        this.config.onSignal(conn.pubkey, { type: 'answer', sdp: answer.sdp || '' })
+        await waitForIceGathering(conn.pc)
+        this.config.onSignal(conn.pubkey, { type: 'answer', sdp: conn.pc.localDescription?.sdp || '' })
       } else if (signal.type === 'answer') {
         await conn.pc.setRemoteDescription(new RTCSessionDescription(signal))
-      } else if (signal.candidate) {
-        try {
-          await conn.pc.addIceCandidate(new RTCIceCandidate(signal))
-        } catch (e) {
-          // ignore invalid candidates
-        }
       }
     } catch (err) {
       console.error('[WRT] applySignal error:', err)
@@ -146,17 +153,6 @@ class WebRTCService {
       }
     }
 
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        this.config.onSignal(pubkey, {
-          type: 'candidate',
-          candidate: event.candidate.candidate,
-          sdpMid: event.candidate.sdpMid || '',
-          sdpMLineIndex: event.candidate.sdpMLineIndex || 0
-        })
-      }
-    }
-
     pc.ontrack = (event) => {
       console.log('[WRT] stream received from', pubkey.slice(0, 8))
       if (event.streams[0]) {
@@ -178,6 +174,7 @@ class WebRTCService {
     if (initiator) {
       pc.createOffer()
         .then(offer => pc.setLocalDescription(offer))
+        .then(() => waitForIceGathering(pc))
         .then(() => {
           this.config.onSignal(pubkey, { type: 'offer', sdp: pc.localDescription?.sdp || '' })
         })
