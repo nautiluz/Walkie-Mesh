@@ -82,7 +82,6 @@ export async function insertTelemetry(metrics: Array<{
   const { error } = await supabase.from('telemetry_logs').insert(
     metrics.map(m => ({
       device_id: m.deviceId,
-      user_id: m.userId,
       metric_name: m.metricName,
       metric_value: m.metricValue,
       severity: m.severity,
