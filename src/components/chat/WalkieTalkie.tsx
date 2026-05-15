@@ -37,9 +37,6 @@ export function WalkieTalkie() {
     return () => {
       audioService.destroy()
       webRTCService.disconnectAll()
-      if (subRef.current) {
-        try { subRef.current.close() } catch {}
-      }
       if (poolRef.current) {
         try { poolRef.current.close(SIGNAL_RELAYS) } catch {}
       }
