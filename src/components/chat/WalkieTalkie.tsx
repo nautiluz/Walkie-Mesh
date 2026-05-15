@@ -6,10 +6,11 @@ import { webRTCService } from '../../services/webrtc'
 import { useSettingsStore } from '../../store/settingsStore'
 
 const SIGNAL_KIND = 2000
+const PRESENCE_KIND = 2001
 const SIGNAL_RELAYS = ['wss://nos.lol', 'wss://relay.damus.io']
 
 export function WalkieTalkie() {
-  const { isPTTActive, setPTTActive, peers, selectedPeerId, setSelectedPeerId, chatMessages, addChatMessage } = useMeshStore()
+  const { isPTTActive, setPTTActive, peers, selectedPeerId, setSelectedPeerId, chatMessages, addChatMessage, addPeer } = useMeshStore()
   const { pttMode, vadEnabled } = useSettingsStore()
   const { profile } = useUserStore()
   const [isInit, setIsInit] = useState(false)
@@ -130,8 +131,24 @@ export function WalkieTalkie() {
           onDisconnect: () => {}
         })
 
-        const sub = pool.subscribeMany(SIGNAL_RELAYS, { kinds: [SIGNAL_KIND], '#p': [pubkey] }, {
+        const sub = pool.subscribeMany(SIGNAL_RELAYS, ([
+          { kinds: [SIGNAL_KIND], '#p': [pubkey] },
+          { kinds: [PRESENCE_KIND], limit: 100 }
+        ] as any), {
           onevent: (event: any) => {
+            if (event.kind === PRESENCE_KIND) {
+              if (event.pubkey === pubkey) return
+              const data = JSON.parse(event.content || '{}')
+              addPeer({
+                id: event.pubkey,
+                pubkey: event.pubkey,
+                username: data.username || event.pubkey.slice(0, 8),
+                signal: -50,
+                protocol: 'nostr',
+                lastSeen: Date.now()
+              })
+              return
+            }
             console.log('[WT] Incoming signal from', event.pubkey.slice(0, 8), 'kind:', event.kind)
             try {
               const signalData = JSON.parse(event.content)
@@ -142,7 +159,18 @@ export function WalkieTalkie() {
           }
         })
         subRef.current = sub
-        console.log('[WT] Signal subscription active for', pubkey.slice(0, 8))
+
+        const presenceEvent = {
+          kind: PRESENCE_KIND,
+          pubkey,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [],
+          content: JSON.stringify({ username: profile?.username || profile?.displayName || 'Peer', online: true })
+        }
+        const signedPresence = finalizeEvent(presenceEvent, sk)
+        Promise.allSettled(pool.publish(SIGNAL_RELAYS, signedPresence)).catch(() => {})
+
+        console.log('[WT] Signal+Presence subscription active for', pubkey.slice(0, 8))
       } catch (err) {
         console.error('Nostr init error:', err)
         setError('Error al conectar con relays Nostr.')
