@@ -46,6 +46,7 @@ export function ProfileManager() {
               {editing ? (
                 <div className="flex gap-2">
                   <input
+                    name="displayName"
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
                     className="flex-1 px-3 py-1 bg-slate-700 rounded-lg text-sm border border-slate-600 focus:border-mesh-500 focus:outline-none"

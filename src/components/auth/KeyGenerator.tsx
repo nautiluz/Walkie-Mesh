@@ -95,6 +95,7 @@ export function KeyGenerator() {
             <label className="text-xs text-slate-500 uppercase tracking-wide">Nombre de usuario</label>
             <input
               type="text"
+              name="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="Tu nombre en la red"
@@ -152,6 +153,7 @@ export function KeyGenerator() {
     <div className="flex flex-col items-center gap-4 py-8">
       <h2 className="text-xl font-bold">Importar llave</h2>
       <textarea
+        name="importKey"
         value={importInput}
         onChange={(e) => setImportInput(e.target.value)}
         placeholder="Pega tu nsec o hex private key..."

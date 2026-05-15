@@ -111,6 +111,7 @@ export function QRScanner() {
           </code>
           <input
             type="text"
+            name="contactAlias"
             value={alias}
             onChange={(e) => setAlias(e.target.value)}
             placeholder="Nombre del contacto"

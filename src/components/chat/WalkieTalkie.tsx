@@ -304,6 +304,7 @@ export function WalkieTalkie() {
       <div className="flex gap-2 mb-3">
         <input
           type="text"
+          name="chatMessage"
           value={chatText}
           onChange={(e) => setChatText(e.target.value)}
           onKeyDown={handleKeyDown}
