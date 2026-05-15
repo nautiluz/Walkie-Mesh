@@ -23,7 +23,9 @@ export function WalkieTalkie() {
   const initRef = useRef(false)
   const poolRef = useRef<any>(null)
   const subRef = useRef<any>(null)
+  const presenceSubRef = useRef<any>(null)
   const pendingMessagesRef = useRef<string[]>([])
+  const seenPeersRef = useRef<Set<string>>(new Set())
 
   const selectedPeer = peers.find(p => p.pubkey === selectedPeerId)
 
@@ -131,24 +133,8 @@ export function WalkieTalkie() {
           onDisconnect: () => {}
         })
 
-        const sub = pool.subscribeMany(SIGNAL_RELAYS, ([
-          { kinds: [SIGNAL_KIND], '#p': [pubkey] },
-          { kinds: [PRESENCE_KIND], limit: 100 }
-        ] as any), {
+        const sub = pool.subscribeMany(SIGNAL_RELAYS, { kinds: [SIGNAL_KIND], '#p': [pubkey] }, {
           onevent: (event: any) => {
-            if (event.kind === PRESENCE_KIND) {
-              if (event.pubkey === pubkey) return
-              const data = JSON.parse(event.content || '{}')
-              addPeer({
-                id: event.pubkey,
-                pubkey: event.pubkey,
-                username: data.username || event.pubkey.slice(0, 8),
-                signal: -50,
-                protocol: 'nostr',
-                lastSeen: Date.now()
-              })
-              return
-            }
             console.log('[WT] Incoming signal from', event.pubkey.slice(0, 8), 'kind:', event.kind)
             try {
               const signalData = JSON.parse(event.content)
@@ -159,6 +145,32 @@ export function WalkieTalkie() {
           }
         })
         subRef.current = sub
+
+        const presenceSub = pool.subscribeMany(SIGNAL_RELAYS, { kinds: [PRESENCE_KIND], limit: 100 }, {
+          onevent: (event: any) => {
+            if (event.pubkey === pubkey) return
+            if (seenPeersRef.current.has(event.pubkey)) return
+            seenPeersRef.current.add(event.pubkey)
+            console.log('[WT] Presence event from', event.pubkey.slice(0, 8))
+            try {
+              const data = JSON.parse(event.content || '{}')
+              addPeer({
+                id: event.pubkey,
+                pubkey: event.pubkey,
+                username: data.username || event.pubkey.slice(0, 8),
+                signal: -50,
+                protocol: 'nostr',
+                lastSeen: Date.now()
+              })
+            } catch (e) {
+              console.error('[WT] Failed to parse presence:', e)
+            }
+          },
+          oneose: () => {
+            console.log('[WT] Presence subscription EOSE received')
+          }
+        })
+        presenceSubRef.current = presenceSub
 
         const presenceEvent = {
           kind: PRESENCE_KIND,
