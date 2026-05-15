@@ -16,7 +16,7 @@ export function getPublicKeyForSignaling() {
   return publicKey
 }
 
-const SIGNAL_RELAYS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.info']
+const SIGNAL_RELAYS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.bg']
 
 export async function publishPresence(username: string) {
   if (!privateKeyHex || !relayPool || !publicKey) return

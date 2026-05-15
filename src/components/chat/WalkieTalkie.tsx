@@ -6,7 +6,7 @@ import { webRTCService } from '../../services/webrtc'
 import { useSettingsStore } from '../../store/settingsStore'
 
 const SIGNAL_KIND = 2000
-const SIGNAL_RELAYS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.info']
+const SIGNAL_RELAYS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.nostr.bg']
 
 export function WalkieTalkie() {
   const { isPTTActive, setPTTActive, peers, selectedPeerId, setSelectedPeerId, chatMessages, addChatMessage } = useMeshStore()
