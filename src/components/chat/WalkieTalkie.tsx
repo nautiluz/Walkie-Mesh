@@ -55,13 +55,6 @@ export function WalkieTalkie() {
     })
   }
 
-  function decodePrivkey(encrypted: string): string {
-    if (encrypted.startsWith('nsec')) {
-      throw new Error('nsec must be decoded before calling init')
-    }
-    return encrypted
-  }
-
   const initWalkieTalkie = async () => {
     let audioOk = false
     try {
@@ -79,7 +72,23 @@ export function WalkieTalkie() {
     }
 
     if (profile?.privateKeyEncrypted) {
-      const privkey = decodePrivkey(profile.privateKeyEncrypted)
+      let privkey = profile.privateKeyEncrypted
+      try {
+        if (privkey.startsWith('nsec')) {
+          const { nip19 } = await import('nostr-tools')
+          const decoded = nip19.decode(privkey)
+          if (decoded.type === 'nsec') {
+            privkey = Array.from(decoded.data as Uint8Array)
+              .map(b => b.toString(16).padStart(2, '0'))
+              .join('')
+          }
+        }
+      } catch (err) {
+        console.error('Key decode error:', err)
+        setError('Error al decodificar llave Nostr.')
+        return
+      }
+
       if (!/^[0-9a-f]{64}$/i.test(privkey)) {
         setError('Llave privada inválida.')
         return
